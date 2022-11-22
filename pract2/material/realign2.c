@@ -99,12 +99,12 @@ void realign( int w, int h, Byte a[] ) {
     return;
   }
 
-  #pragma omp parallel private (v)
+  #pragma omp parallel private (v, off, bestoff, dmin, d)
   {
     // Part 1. Find optimal offset of each line with respect to the previous line
 
     // paralelizar primer bucle
-    #pragma omp for private (dmin)    
+    #pragma omp for    
     for ( y = 1 ; y < h ; y++ ) {
 
       // Find offset of line y that produces the minimum distance between lines y and y-1
@@ -121,7 +121,7 @@ void realign( int w, int h, Byte a[] ) {
     }
   
     // Part 2. Convert offsets from relative to absolute and find maximum offset of any line
-    #pragma omp critical 
+    #pragma omp single
     {
       max = 0;
       voff[0] = 0;
@@ -131,7 +131,6 @@ void realign( int w, int h, Byte a[] ) {
         if ( d > max ) max = d;
       }
     }
-  
 
     // Part 3. Shift each line to its place, using auxiliary buffer v
     v = malloc( 3 * max * sizeof(Byte));
@@ -144,10 +143,10 @@ void realign( int w, int h, Byte a[] ) {
       }
       free(v);
     }
-    
-    #pragma omp master
-    free(voff);
   }
+
+    free(voff);
+  
 }
 
 int main(int argc,char *argv[]) {
