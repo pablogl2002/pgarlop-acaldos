@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <omp.h>
 
 typedef unsigned char Byte;
 
@@ -132,7 +133,7 @@ void realign( int w,int h,Byte a[] ) {
   // Part 3. Shift each line to its place, using auxiliary buffer v
   // paralelización bucle tercera parte
   
-  #pragma omp parallel private(v, y)
+  #pragma omp parallel private(v)
   {
     v = malloc( 3 * max * sizeof(Byte));
     if ( v == NULL )
@@ -169,11 +170,17 @@ int main(int argc,char *argv[]) {
   a = read_ppm(in,&w,&h);
   if ( a == NULL ) return 1;
 
+  #pragma omp parallel
+  {
+    int id = omp_get_thread_num();
+    if (id == 0) printf("Número de hilos: %d.\n", omp_get_num_threads());
+  }
+
   start = omp_get_wtime();
   realign( w,h,a );
   end = omp_get_wtime();
-  printf("Tiempo función realign: %f.\n ", end-start);
-
+  printf("Tiempo función realign: %f.\n", end-start);
+  
   if ( out[0] != '\0' ) write_ppm(out,w,h,a);
 
   free(a);

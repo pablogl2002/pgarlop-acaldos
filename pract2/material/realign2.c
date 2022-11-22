@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <omp.h>
 
 typedef unsigned char Byte;
 
@@ -88,21 +89,22 @@ void cyclic_shift( int n, Byte a[], int p, Byte v[] ) {
 }
 
 // Realign the rows of image a, of width w and height h
-void realign( int w,int h,Byte a[] ) {
+void realign( int w, int h, Byte a[] ) {
   int y, off,bestoff,dmin,max, d, *voff;
   Byte *v;
-
+  
   voff = malloc( h * sizeof(int) );
   if ( voff == NULL ) {
     fprintf(stderr,"ERROR: Not enough memory for voff\n");
     return;
   }
 
-  #pragma omp parallel private (v, d){
+  #pragma omp parallel private (v)
+  {
     // Part 1. Find optimal offset of each line with respect to the previous line
 
     // paralelizar primer bucle
-    #pragma omp for private (dmin, bestoff)    
+    #pragma omp for private (dmin)    
     for ( y = 1 ; y < h ; y++ ) {
 
       // Find offset of line y that produces the minimum distance between lines y and y-1
@@ -117,9 +119,10 @@ void realign( int w,int h,Byte a[] ) {
       }
       voff[y] = bestoff;
     }
-
+  
     // Part 2. Convert offsets from relative to absolute and find maximum offset of any line
-    #pragma omp critical {
+    #pragma omp critical 
+    {
       max = 0;
       voff[0] = 0;
       for ( y = 1 ; y < h ; y++ ) {
@@ -128,7 +131,7 @@ void realign( int w,int h,Byte a[] ) {
         if ( d > max ) max = d;
       }
     }
-    
+  
 
     // Part 3. Shift each line to its place, using auxiliary buffer v
     v = malloc( 3 * max * sizeof(Byte));
@@ -141,7 +144,8 @@ void realign( int w,int h,Byte a[] ) {
       }
       free(v);
     }
-
+    
+    #pragma omp master
     free(voff);
   }
 }
@@ -165,6 +169,12 @@ int main(int argc,char *argv[]) {
 
   a = read_ppm(in,&w,&h);
   if ( a == NULL ) return 1;
+
+  #pragma omp parallel
+  {
+    int id = omp_get_thread_num();
+    if (id == 0) printf("Número de hilos: %d.\n", omp_get_num_threads());
+  }
 
   start = omp_get_wtime();
   realign( w,h,a );
