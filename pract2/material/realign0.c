@@ -87,11 +87,6 @@ void cyclic_shift( int n, Byte a[], int p, Byte v[] ) {
   }
 }
 
-
-double start;
-double end;
-
-start = omp_get_wtime();
 // Realign the rows of image a, of width w and height h
 void realign( int w,int h,Byte a[] ) {
   int y, off,bestoff,dmin,max, d, *voff;
@@ -117,8 +112,6 @@ void realign( int w,int h,Byte a[] ) {
     }
     voff[y] = bestoff;
   }
-end = omp_get_wtime();
-printf_s("Tiempo función realign: %f.\n ", end-start);
 
   // Part 2. Convert offsets from relative to absolute and find maximum offset of any line
   max = 0;
@@ -147,6 +140,7 @@ int main(int argc,char *argv[]) {
   char *in, *out = "";
   int   w, h;
   Byte *a;
+  double start, end;
 
   if (argc<2) {
     fprintf(stderr,"ERROR: you must provide an input file\n");
@@ -155,13 +149,17 @@ int main(int argc,char *argv[]) {
     fprintf(stderr,"ERROR: wrong number of arguments\n");
     return -1;
   }
+  
   in = argv[1];               // input filename
   if (argc>2) out = argv[2];  // output filename
 
   a = read_ppm(in,&w,&h);
   if ( a == NULL ) return 1;
 
+  start = omp_get_wtime();
   realign( w,h,a );
+  end = omp_get_wtime();
+  printf("Tiempo función realign: %f.\n ", end-start);
 
   if ( out[0] != '\0' ) write_ppm(out,w,h,a);
 

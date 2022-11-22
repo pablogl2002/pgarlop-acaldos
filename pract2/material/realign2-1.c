@@ -87,70 +87,72 @@ void cyclic_shift( int n, Byte a[], int p, Byte v[] ) {
   }
 }
 
+
+double start;
+double end;
+
+start = omp_get_wtime();
 // Realign the rows of image a, of width w and height h
-void realign( int w,int h,Byte a[] ) {
+void realign( int
+ w,int h,Byte a[] ) {
   int y, off,bestoff,dmin,max, d, *voff;
   Byte *v;
 
-  voff = malloc( h * sizeof(int) );
+  // paralelizar con una única region paralela 
+  #pragma omp parallel {
+    voff = malloc( h * sizeof(int) );
   if ( voff == NULL ) {
     fprintf(stderr,"ERROR: Not enough memory for voff\n");
     return;
   }
 
-  #pragma omp parallel private (v, d){
-    // Part 1. Find optimal offset of each line with respect to the previous line
+  // Part 1. Find optimal offset of each line with respect to the previous line
+  for ( y = 1 ; y < h ; y++ ) {
 
-    // paralelizar primer bucle
-    #pragma omp for private (dmin, bestoff)    
-    for ( y = 1 ; y < h ; y++ ) {
-
-      // Find offset of line y that produces the minimum distance between lines y and y-1
-      dmin = distance( w, &a[3*(y-1)*w], &a[3*y*w], INT_MAX ); // offset=0
-      bestoff = 0;
-      for ( off = 1 ; off < w ; off++ ) {
-        d  = distance( w-off, &a[3*(y-1)*w], &a[3*(y*w+off)], dmin );
-        d += distance( off, &a[3*(y*w-off)], &a[3*y*w], dmin-d );
-        // Update minimum distance and corresponding best offset
-
-          if ( d < dmin ) { dmin = d; bestoff = off; }
-      }
-      voff[y] = bestoff;
+    // Find offset of line y that produces the minimum distance between lines y and y-1
+    dmin = distance( w, &a[3*(y-1)*w], &a[3*y*w], INT_MAX ); // offset=0
+    bestoff = 0;
+    for ( off = 1 ; off < w ; off++ ) {
+      d  = distance( w-off, &a[3*(y-1)*w], &a[3*(y*w+off)], dmin );
+      d += distance( off, &a[3*(y*w-off)], &a[3*y*w], dmin-d );
+      // Update minimum distance and corresponding best offset
+      if ( d < dmin ) { dmin = d; bestoff = off; }
     }
-
-    // Part 2. Convert offsets from relative to absolute and find maximum offset of any line
-    #pragma omp critical {
-      max = 0;
-      voff[0] = 0;
-      for ( y = 1 ; y < h ; y++ ) {
-        voff[y] = ( voff[y-1] + voff[y] ) % w;
-        d = voff[y] <= w / 2 ? voff[y] : w - voff[y];
-        if ( d > max ) max = d;
-      }
-    }
-    
-
-    // Part 3. Shift each line to its place, using auxiliary buffer v
-    v = malloc( 3 * max * sizeof(Byte));
-    if ( v == NULL )
-      fprintf(stderr,"ERROR: Not enough memory for v\n");
-    else {
-      #pragma omp for
-      for ( y = 1 ; y < h ; y++ ) {
-        cyclic_shift( w, &a[3*y*w], voff[y], v );
-      }
-      free(v);
-    }
-
-    free(voff);
+    voff[y] = bestoff;
   }
+end = omp_get_wtime();
+printf_s("Tiempo función realign: %f.\n ", end-start);
+
+  // Part 2. Convert offsets from relative to absolute and find maximum offset of any line
+  max = 0;
+  voff[0] = 0;
+  for ( y = 1 ; y < h ; y++ ) {
+    voff[y] = ( voff[y-1] + voff[y] ) % w;
+    d = voff[y] <= w / 2 ? voff[y] : w - voff[y];
+    if ( d > max ) max = d;
+  }
+
+  // Part 3. Shift each line to its place, using auxiliary buffer v
+  v = malloc( 3 * max * sizeof(Byte) );
+  if ( v == NULL )
+    fprintf(stderr,"ERROR: Not enough memory for v\n");
+  else {
+    for ( y = 1 ; y < h ; y++ ) {
+      cyclic_shift( w, &a[3*y*w], voff[y], v );
+    }
+    free(v);
+  }
+
+  free(voff);
+
+  }
+  
 }
 
 int main(int argc,char *argv[]) {
   char *in, *out = "";
   int   w, h;
   Byte *a;
-  double start, end;
 
   if (argc<2) {
     fprintf(stderr,"ERROR: you must provide an input file\n");
@@ -159,17 +161,13 @@ int main(int argc,char *argv[]) {
     fprintf(stderr,"ERROR: wrong number of arguments\n");
     return -1;
   }
-  
   in = argv[1];               // input filename
   if (argc>2) out = argv[2];  // output filename
 
   a = read_ppm(in,&w,&h);
   if ( a == NULL ) return 1;
 
-  start = omp_get_wtime();
   realign( w,h,a );
-  end = omp_get_wtime();
-  printf("Tiempo función realign: %f.\n ", end-start);
 
   if ( out[0] != '\0' ) write_ppm(out,w,h,a);
 
