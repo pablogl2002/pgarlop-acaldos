@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,10 +57,22 @@ void write_ppm(char file[],int w,int h,Byte *c) {
 int distance( int n, Byte a1[], Byte a2[], int c ) {
   int i, d,e;
   n *= 3; // 3 bytes per pixel (red, green, blue)
+  
   d = 0;
-  for ( i = 0 ; i < n && d < c ; i++ ) {
-    e = (int)a1[i] - a2[i];
-    if ( e >= 0 ) d += e; else d -= e;
+  #pragma omp parallel private (i, e) reduction (+:d)
+  {
+   
+    int nHilos = omp_get_num_threads();
+    int actHilo = omp_get_thread_num();
+    
+    for ( i = actHilo ; i < n && d < c ; i += nHilos ) {
+
+      e = (int)a1[i] - a2[i];
+      if ( e >= 0 ) 
+        d += e; 
+      else 
+        d -= e;
+    }
   }
   return d;
 }
@@ -68,84 +81,87 @@ int distance( int n, Byte a1[], Byte a2[], int c ) {
 // v is an auxiliary array of min(p,n-p) pixels at least
 void cyclic_shift( int n, Byte a[], int p, Byte v[] ) {
   int i,d;
-
+  
+    
   if ( p != 0 ) {
     n *= 3; p *= 3;
     d = n - p;
     // Shift is done from right to left of from left to right
     // depending on which alternative requires less space in the auxiliary
     // array v
-    if ( p <= n / 2 ) { // right to left
-      for ( i = 0 ; i < p ; i++ ) v[i] = a[i];
-      for ( i = p ; i < n ; i++ ) a[i-p] = a[i];
-      for ( i = 0 ; i < p  ; i++ ) a[d+i] = v[i];
-    } else { // left to right
-      for ( i = 0 ; i < d ; i++ ) v[i] = a[p+i];
-      for ( i = p-1 ; i >= 0 ; i-- ) a[i+d] = a[i];
-      for ( i = 0 ; i < d  ; i++ ) a[i] = v[i];
+    #pragma omp parallel
+    {
+      if ( p <= n / 2 ) { // right to left            
+        #pragma omp for
+        for ( i = 0 ; i < p ; i++ ) v[i] = a[i];
+
+        #pragma omp single
+        for ( i = p ; i < n ; i++ ) a[i-p] = a[i];
+
+        #pragma omp for
+        for ( i = 0 ; i < p  ; i++ ) a[d+i] = v[i];
+      
+      } else { // left to right
+        #pragma omp for
+        for ( i = 0 ; i < d ; i++ ) v[i] = a[p+i];
+
+        #pragma omp single
+        for ( i = p-1 ; i >= 0 ; i-- ) a[i+d] = a[i];
+
+        #pragma omp for
+        for ( i = 0 ; i < d  ; i++ ) a[i] = v[i];
+      }
     }
-  }
+  }  
 }
 
 // Realign the rows of image a, of width w and height h
-void realign( int w, int h, Byte a[] ) {
+void realign( int w,int h,Byte a[] ) {
   int y, off,bestoff,dmin,max, d, *voff;
   Byte *v;
-  
+
   voff = malloc( h * sizeof(int) );
   if ( voff == NULL ) {
     fprintf(stderr,"ERROR: Not enough memory for voff\n");
     return;
   }
 
-  #pragma omp parallel private (v, off, bestoff, dmin, d)
-  {
-    // Part 1. Find optimal offset of each line with respect to the previous line
+  // Part 1. Find optimal offset of each line with respect to the previous line
+  for ( y = 1 ; y < h ; y++ ) {
 
-    // paralelizar primer bucle
-    #pragma omp for    
-    for ( y = 1 ; y < h ; y++ ) {
-
-      // Find offset of line y that produces the minimum distance between lines y and y-1
-      dmin = distance( w, &a[3*(y-1)*w], &a[3*y*w], INT_MAX ); // offset=0
-      bestoff = 0;
-      for ( off = 1 ; off < w ; off++ ) {
-        d  = distance( w-off, &a[3*(y-1)*w], &a[3*(y*w+off)], dmin );
-        d += distance( off, &a[3*(y*w-off)], &a[3*y*w], dmin-d );
-        // Update minimum distance and corresponding best offset
-
-          if ( d < dmin ) { dmin = d; bestoff = off; }
-      }
-      voff[y] = bestoff;
+    // Find offset of line y that produces the minimum distance between lines y and y-1
+    dmin = distance( w, &a[3*(y-1)*w], &a[3*y*w], INT_MAX ); // offset=0
+    bestoff = 0;
+    for ( off = 1 ; off < w ; off++ ) {
+      d  = distance( w-off, &a[3*(y-1)*w], &a[3*(y*w+off)], dmin );
+      d += distance( off, &a[3*(y*w-off)], &a[3*y*w], dmin-d );
+      // Update minimum distance and corresponding best offset
+      if ( d < dmin ) { dmin = d; bestoff = off; }
     }
-  
-    // Part 2. Convert offsets from relative to absolute and find maximum offset of any line
-    #pragma omp single
-    {
-      max = 0;
-      voff[0] = 0;
-      for ( y = 1 ; y < h ; y++ ) {
-        voff[y] = ( voff[y-1] + voff[y] ) % w;
-        d = voff[y] <= w / 2 ? voff[y] : w - voff[y];
-        if ( d > max ) max = d;
-      }
-    }
-
-    // Part 3. Shift each line to its place, using auxiliary buffer v
-    v = malloc( 3 * max * sizeof(Byte));
-    if ( v == NULL )
-      fprintf(stderr,"ERROR: Not enough memory for v\n");
-    else {
-      #pragma omp for
-      for ( y = 1 ; y < h ; y++ ) {
-        cyclic_shift( w, &a[3*y*w], voff[y], v );
-      }
-      free(v);
-    }
+    voff[y] = bestoff;
   }
 
-    free(voff);
-  
+  // Part 2. Convert offsets from relative to absolute and find maximum offset of any line
+  max = 0;
+  voff[0] = 0;
+  for ( y = 1 ; y < h ; y++ ) {
+    voff[y] = ( voff[y-1] + voff[y] ) % w;
+    d = voff[y] <= w / 2 ? voff[y] : w - voff[y];
+    if ( d > max ) max = d;
+  }
+
+  // Part 3. Shift each line to its place, using auxiliary buffer v
+  v = malloc( 3 * max * sizeof(Byte) );
+  if ( v == NULL )
+    fprintf(stderr,"ERROR: Not enough memory for v\n");
+  else {
+    for ( y = 1 ; y < h ; y++ ) {
+      cyclic_shift( w, &a[3*y*w], voff[y], v );
+    }
+    free(v);
+  }
+
+  free(voff);
 }
 
 int main(int argc,char *argv[]) {
@@ -167,12 +183,6 @@ int main(int argc,char *argv[]) {
 
   a = read_ppm(in,&w,&h);
   if ( a == NULL ) return 1;
-
-  #pragma omp parallel
-  {
-    int id = omp_get_thread_num();
-    if (id == 0) printf("Número de hilos: %d.\n", omp_get_num_threads());
-  }
 
   start = omp_get_wtime();
   realign( w,h,a );
